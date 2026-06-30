@@ -1,49 +1,45 @@
 /**
  * DIY Timer Switch - Seven Segment Display Test Code
  * 
- * This code displays digits 0 to 9 on a 2-digit multiplexed seven segment display.
- * The displayed digit increments by 1 on every touch of the touch sensor module.
+ * This code displays hexadecimal digits 0 to f on a single-digit seven segment display.
+ * The displayed digit/character increments by 1 on every touch of the touch sensor module.
  * If kept pressed, the digit continues to auto-increment.
  * A quick double tap resets the digit count to 0.
  * 
  * ATmega8 pin mapping (according to the MiniCore board package):
  * -----------------------------------------------------------
- * - segmentPins[] = {A0, A1, A2, A3, A4, A5, 6, 7}; // A, B, C, D, E, F, G, DP
- * - DIGIT_1 (Left Display Control)  = Pin 8  (PB0)
- * - DIGIT_2 (Right Display Control) = Pin 9  (PB1)
- * - TOUCH_PIN (Touch Sensor Input)  = Pin 0  (PD0)
+ * - segmentPins[] = {15, 14, 16, 17, 18, 19, 5}; // A, B, C, D, E, F, G (No DP)
+ * - DISPLAY_EN (Display Enable)     = Arduino D8 (PB0 / Physical Pin 14)
+ * - TOUCH_PIN (Touch Sensor Input)  = Arduino D0 (PD0 / Physical Pin 2)
+ * - BUZZER_PIN (Buzzer Output)      = Arduino D9 (PB1 / Physical Pin 15)
  */
 
 // Segment pin definitions (Common Cathode)
-// Segment A to F are connected to PC0 to PC5
-const int SEG_A = 14; // PC0 (A0 / D14)
-const int SEG_B = 15; // PC1 (A1 / D15)
-const int SEG_C = 16; // PC2 (A2 / D16)
-const int SEG_D = 17; // PC3 (A3 / D17)
-const int SEG_E = 18; // PC4 (A4 / D18)
-const int SEG_F = 19; // PC5 (A5 / D19)
-const int SEG_G = 6;  // PD6 (D6)
-const int SEG_DP = 7; // PD7 (D7)
+// Segment pins are connected from PC0 to PC5, and Segment G is on PD5.
+const int SEG_A = A0; // PC0 (Arduino D14 / Physical Pin 23)
+const int SEG_B = A1; // PC1 (Arduino D15 / Physical Pin 24)
+const int SEG_C = A2; // PC2 (Arduino D16 / Physical Pin 25)
+const int SEG_D = A3; // PC3 (Arduino D17 / Physical Pin 26)
+const int SEG_E = A4; // PC4 (Arduino D18 / Physical Pin 27)
+const int SEG_F = A5; // PC5 (Arduino D19 / Physical Pin 28)
+const int SEG_G = 5;  // PD5 (Arduino D5  / Physical Pin 11)
 
-// Digit selection pins (Transistor control)
-// Q1 controls the tens (left) digit
-// Q2 controls the units (right) digit
-const int DIGIT_1 = 8; // PB0 (D8) - Tens (Left)
-const int DIGIT_2 = 9; // PB1 (D9) - Units (Right)
+// Single digit display enable pin (Controls Q2 NPN transistor to enable common cathode)
+const int DISPLAY_EN = 8; // PB0 (Arduino D8 / Physical Pin 14)
 
 // Touch sensor pin definition (JP1 Pin 2 connected to PD0)
-const int TOUCH_PIN = 0; // PD0 (D0) - Touch Sensor I/O
+const int TOUCH_PIN = 0; // PD0 (Arduino D0 / Physical Pin 2)
 // TTP223 module outputs HIGH when touched and LOW when idle (active-high).
 const bool TOUCHED_STATE = HIGH; 
 
-// Buzzer pin definition (TMB12A05 active buzzer connected to PD1)
-const int BUZZER_PIN = 1; // PD1 (D1) - Buzzer Output
+// Buzzer pin definition (TMB12A03 active buzzer connected to PB1)
+const int BUZZER_PIN = 9; // PB1 (Arduino D9 / Physical Pin 15)
 
-// Store segment pins in an array for easy iteration
-const int segmentPins[] = {SEG_A, SEG_B, SEG_C, SEG_D, SEG_E, SEG_F, SEG_G, SEG_DP};
+// Store segment pins in an array for easy iteration (G, F, E, D, C, B, A order for bit matching)
+const int segmentPins[] = {SEG_A, SEG_B, SEG_C, SEG_D, SEG_E, SEG_F, SEG_G};
 
-// Lookup table for digits 0-9 (Common Cathode: HIGH turns segment ON)
-// Bit order: DP G F E D C B A
+// Lookup table for digits 0-9 and a-f (Common Cathode: HIGH turns segment ON)
+// Bit order: G F E D C B A (DP is not connected)
 const byte digitPatterns[] = {
   0b00111111, // 0: A, B, C, D, E, F
   0b00000110, // 1: B, C
@@ -54,7 +50,13 @@ const byte digitPatterns[] = {
   0b01111101, // 6: A, C, D, E, F, G
   0b00000111, // 7: A, B, C
   0b01111111, // 8: A, B, C, D, E, F, G
-  0b01101111  // 9: A, B, C, D, F, G
+  0b01101111, // 9: A, B, C, D, F, G
+  0b01110111, // a: A, B, C, E, F, G
+  0b01111100, // b: C, D, E, F, G
+  0b01011000, // c: D, E, G (lowercase 'c' representation)
+  0b01011110, // d: B, C, D, E, G
+  0b01111001, // e: A, D, E, F, G (uppercase 'E' representation)
+  0b01110001  // f: A, E, F, G (uppercase 'F' representation)
 };
 
 int currentDigit = 0;
@@ -80,18 +82,15 @@ unsigned long buzzerTurnOffTime = 0;
 const unsigned long beepDuration = 50; // duration of beep in ms
 
 void setup() {
-  // Set all segment pins as OUTPUT
-  for (int i = 0; i < 8; i++) {
+  // Set all segment pins as OUTPUT (7 segments)
+  for (int i = 0; i < 7; i++) {
     pinMode(segmentPins[i], OUTPUT);
     digitalWrite(segmentPins[i], LOW); // Turn off initially
   }
   
-  // Set digit control pins as OUTPUT
-  pinMode(DIGIT_1, OUTPUT);
-  pinMode(DIGIT_2, OUTPUT);
-  
-  digitalWrite(DIGIT_1, LOW); // OFF
-  digitalWrite(DIGIT_2, LOW); // OFF
+  // Set single-digit control pin as OUTPUT and enable it (HIGH controls NPN transistor to pull cathode to GND)
+  pinMode(DISPLAY_EN, OUTPUT);
+  digitalWrite(DISPLAY_EN, HIGH);
 
   // Set touch sensor pin as INPUT (PD0)
   pinMode(TOUCH_PIN, INPUT);
@@ -139,8 +138,8 @@ void loop() {
           wasIncremented = false; // Disable auto-repeat for the double-tap release
           triggerBeep();
         } else {
-          // Single tap: increment count
-          currentDigit = (currentDigit + 1) % 10;
+          // Single tap: increment count (0 to 15)
+          currentDigit = (currentDigit + 1) % 16;
           wasIncremented = true;
           triggerBeep();
         }
@@ -162,37 +161,24 @@ void loop() {
     unsigned long requiredDelay = (currentMillis - lastDebounceTime < 700) ? firstRepeatDelay : repeatSpeed;
     
     if (currentMillis - lastIncrementTime >= requiredDelay) {
-      currentDigit = (currentDigit + 1) % 10;
+      currentDigit = (currentDigit + 1) % 16;
       lastIncrementTime = currentMillis;
       triggerBeep();
     }
   }
   
-  // Display both digits using multiplexing (performing blanking to avoid ghosting)
-  
-  // --- Phase 1: Display '0' on the Left Digit (Tens) ---
-  digitalWrite(DIGIT_1, LOW);  // Turn off both digits (Blanking)
-  digitalWrite(DIGIT_2, LOW);
-  showDigit(0);
-  digitalWrite(DIGIT_1, HIGH); // Turn on Left Digit
-  delay(5);                    // Small delay for persistence of vision
-  
-  // --- Phase 2: Display current Digit on the Right Digit (Units) ---
-  digitalWrite(DIGIT_1, LOW);  // Turn off both digits (Blanking)
-  digitalWrite(DIGIT_2, LOW);
+  // Continuously write the current pattern to the 7 segments (no multiplexing delay required)
   showDigit(currentDigit);
-  digitalWrite(DIGIT_2, HIGH); // Turn on Right Digit
-  delay(5);                    // Small delay for persistence of vision
 }
 
 // Function to output the digit pattern to the segment pins
 void showDigit(int number) {
-  if (number < 0 || number > 9) return;
+  if (number < 0 || number > 15) return;
   
   byte pattern = digitPatterns[number];
   
-  // Turn each segment pin ON/OFF based on the corresponding pattern bit
-  for (int i = 0; i < 8; i++) {
+  // Turn each segment pin ON/OFF based on the corresponding pattern bit (7 segments)
+  for (int i = 0; i < 7; i++) {
     bool bitValue = bitRead(pattern, i);
     digitalWrite(segmentPins[i], bitValue ? HIGH : LOW);
   }
